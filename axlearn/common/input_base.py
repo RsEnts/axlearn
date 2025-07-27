@@ -187,6 +187,10 @@ class Input(Module):
         self._input_partitioner: Optional[InputPartitionFn] = maybe_instantiate(
             cfg.input_partitioner
         )
+        print(f"partition_spec = {self._partition_spec}", flush=True)
+        print(f"cfg.input_dispatcher = {cfg.input_dispatcher}", flush=True)
+        print(f"cfg.partition_spec = {cfg.partition_spec}", flush=True)
+        print(f"input_partitioner = {self._input_partitioner}", flush=True)
 
     def dataset(self) -> Iterable[Nested[Tensor]]:
         """Returns the input dataset, which should produce per-feed logical batches.

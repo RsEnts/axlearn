@@ -31,6 +31,7 @@ from axlearn.common.attention import (
     RoFormerQKVLinear,
     StackedTransformerLayer,
 )
+from jax.sharding import PartitionSpec
 from axlearn.common.base_layer import RematSpec
 from axlearn.common.config import config_for_function
 from axlearn.common.decoder import LmHead
@@ -1107,6 +1108,41 @@ def trainer_configs(
                     convert_training_input=True,
                 )
                 cfg = grain_modifier.instantiate()(cfg)
+                
+                # For the grain pipeline, we must explicitly set the partition_spec on the
+                # input_dispatcher, which provides the sharding rules to the trainer
+                # for the host-to-device transfer.
+                complete_spec = {
+                    # Shard 1D tensors like input_ids and target_labels along the 'data' axis.
+                    "input_ids": PartitionSpec("data"),
+                    "target_labels": PartitionSpec("data"),
+                    # Replicate the 0D scalar 'target_num_bytes' by providing an empty PartitionSpec.
+                    "target_num_bytes": PartitionSpec(),
+                }
+
+                # Set the partition_spec directly on the dispatcher's config.
+                cfg.input.input_dispatcher.set(partition_spec=complete_spec)
+                
+                # Also set it on the parent input config for consistency. This ensures
+                # that if the dispatcher is not used for some reason, the correct spec is still found.
+                cfg.input.set(partition_spec=complete_spec)
+                
+                # For the grain pipeline, we must explicitly set the partition_spec on the
+                # input_dispatcher, which provides the sharding rules to the trainer.
+                # complete_spec = {
+                #     # Shard 1D tensors along the 'data' axis.
+                #     "input_ids": PartitionSpec("data"),
+                #     "target_labels": PartitionSpec("data"),
+                #     # Replicate the 0D scalar by providing an empty PartitionSpec.
+                #     "target_num_bytes": PartitionSpec(),
+                # }
+
+                # # Set the partition_spec directly on the dispatcher's config.
+                # cfg.input.input_dispatcher.set(partition_spec=complete_spec)
+                
+                # # Also set it on the parent input config to ensure consistency.
+                # cfg.input.set(partition_spec=complete_spec)
+                # print(f"Applied complete partition spec for grain input: {cfg.input.input_partitioner}", flush=True)
 
                 # Configure grain-specific input processing settings
                 # pylint: disable=cell-var-from-loop

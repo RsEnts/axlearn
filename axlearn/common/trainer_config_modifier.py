@@ -5,9 +5,11 @@
 import json
 import logging
 import os
-from typing import Dict, Optional, Sequence, Union
+from typing import Callable, Dict, Optional, Sequence, Union
 
 from axlearn.common import config
+from axlearn.common import file_system as fs
+from axlearn.common import input_grain_text
 from axlearn.common.base_layer import RematSpec
 from axlearn.common.config import (
     REQUIRED,
@@ -20,6 +22,8 @@ from axlearn.common.config import (
     maybe_instantiate,
 )
 from axlearn.common.gradient_accumulation import with_minibatch_steps
+from axlearn.common.input_grain import Dataset
+from axlearn.common.input_grain_lm import windowed_packing
 from axlearn.common.metrics import MetricAccumulator
 from axlearn.common.quantized_dot_general.layers import (
     DenseGeneralBaseLayer,
@@ -370,7 +374,28 @@ class GrainConfigModifier(ConfigModifier):
         # Extract other relevant config parameters from tf_data_config, with fallbacks
         vocab_cfg = tf_data_config.vocab_cfg
         max_sequence_length = tf_data_config.max_sequence_length
-        preprocessor = config_for_function(input_grain_lm.text_to_lm_training_input).set(
+        
+        def partial_text_to_lm_training_input(
+            vocab: ConfigOr[input_grain_text.Vocabulary],
+            max_len: int,
+            window_size: int = 128,
+            max_padding_fraction: float = 1,
+            read_options: grain.ReadOptions = grain.ReadOptions(
+                num_threads=1, prefetch_buffer_size=16
+            ),
+            packing_fn: Callable = windowed_packing,
+        ) -> Callable[[Dataset], Dataset]:
+            return lambda ds: input_grain_lm.text_to_lm_training_input(
+                ds,
+                vocab=vocab,
+                max_len=max_len,
+                max_padding_fraction=max_padding_fraction,
+                window_size=window_size,
+                read_options=read_options,
+                packing_fn=packing_fn,
+            )
+
+        preprocessor = config_for_function(partial_text_to_lm_training_input).set(
             vocab=vocab_cfg,
             max_len=max_sequence_length,
             max_padding_fraction=tf_data_config.preprocessor.max_padding_fraction,

@@ -804,14 +804,6 @@ def mixture_train_input_source(
 
     def build_dataset_fn(
             dispatch_config: DispatchConfig,
-            *,
-            is_training: bool,
-            vocab_cfg: ConfigOr,
-            preprocessor: Union[ConfigOr, list[ConfigOr]],
-            data_mixture_components: Union[ConfigOr, list],
-            max_sequence_length: int,
-            replace_newlines_with: str = "<n>",
-            seed: Optional[int] = 42,
         ) -> Dataset:
         sources = []
         weights = []
@@ -831,7 +823,7 @@ def mixture_train_input_source(
             arrayrecord_files = [
                 os.path.join(arrayrecord_dataset_dir, f)
                 for f in all_files
-                if f.endswith(".arrayrecord")
+                if "array_record" in f
             ]
 
             # Create ArrayRecord dataset
@@ -869,10 +861,11 @@ def mixture_train_input_source(
 
             # Apply processor to the source dataset
             processor_fn = maybe_instantiate(processor_cfg)
-            source_ds = source_ds.map(processor_fn)
+            source_ds = processor_fn(source_ds)
 
-            # Repeat the dataset for mixing
-            source_ds = source_ds.repeat()
+            # Repeat the dataset for mixing.
+            # Commenting this out because 'MapIterDataset' object has no attribute 'repeat'
+            #source_ds = source_ds.repeat()
 
             sources.append(source_ds)
             weights.append(component.weight)
@@ -883,12 +876,4 @@ def mixture_train_input_source(
         # Shard the mixed dataset
         return mixed_ds
 
-    return config_for_function(build_dataset_fn).set(
-        is_training=is_training,
-        vocab_cfg=vocab_cfg,
-        preprocessor=preprocessor,
-        data_mixture_components=data_mixture_components,
-        max_sequence_length=max_sequence_length,
-        replace_newlines_with=replace_newlines_with,
-        seed=seed,
-    )
+    return build_dataset_fn
