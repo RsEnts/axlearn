@@ -739,7 +739,6 @@ def get_trainer_config_fn(
                 path_rank_to_partition={
                     # Note: the batch axes are different here than in `cfg.batch_axis_names`,
                     # as we partition sequence dim over `seq`.
-                    (None, 0): PartitionSpec(),
                     (None, 1): PartitionSpec(("data", "expert", "fsdp")),
                     (None, 2): PartitionSpec(("data", "expert", "fsdp"), "seq"),
                 }
