@@ -187,6 +187,10 @@ class Input(Module):
         self._input_partitioner: Optional[InputPartitionFn] = maybe_instantiate(
             cfg.input_partitioner
         )
+        print(f"partition_spec = {self._partition_spec}", flush=True)
+        print(f"cfg.input_dispatcher = {cfg.input_dispatcher}", flush=True)
+        print(f"cfg.partition_spec = {cfg.partition_spec}", flush=True)
+        print(f"input_partitioner = {self._input_partitioner}", flush=True)
 
     def dataset(self) -> Iterable[Nested[Tensor]]:
         """Returns the input dataset, which should produce per-feed logical batches.
@@ -236,6 +240,10 @@ class Input(Module):
         """
 
         def constrain_batch_axis(path: str, value: Tensor):
+            # Handle scalars - they have no batch dimension to constrain
+            if value.ndim == 0:
+                return with_sharding_constraint(value, PartitionSpec())
+            
             mesh = thread_resources.env.physical_mesh
             batch_partitions = math.prod(
                 mesh.shape[axis] for axis in jax.tree.leaves(self._partition_spec[0])

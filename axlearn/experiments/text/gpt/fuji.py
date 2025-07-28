@@ -31,6 +31,7 @@ from axlearn.common.attention import (
     RoFormerQKVLinear,
     StackedTransformerLayer,
 )
+from jax.sharding import PartitionSpec
 from axlearn.common.base_layer import RematSpec
 from axlearn.common.config import config_for_function
 from axlearn.common.decoder import LmHead

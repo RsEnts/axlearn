@@ -562,12 +562,26 @@ class Model(BaseModel):
                 logits: a float Tensor of shape [batch_size, seq_len, vocab_size]
                 hidden_states: a float Tensor of shape [batch_size, seq_len, hidden_dim]
         """
+        print(f"DEBUG: input_batch = {input_batch}", flush=True)
         self._constrain_input_batch(input_batch)
+        
         # TODO(markblee): Simplify by using consistent naming between `input_positions` and
         # `positions`, `input_segment_ids` and `segment_ids`.
-        # Decoder hidden states: [batch_size, target_len, hidden_dim].
-        decoder_batch = {**input_batch}
-        decoder_batch["positions"] = input_batch.get("input_positions")
+        
+        # Create decoder_batch by filtering out scalar fields
+        decoder_batch = {}
+        for key, value in input_batch.items():
+            # Only include non-scalar tensors in decoder_batch
+            if hasattr(value, 'ndim') and value.ndim > 0:
+                print(f"DEBUG: Including field '{key}' in decoder input", flush=True)
+                print(f"DEBUG: value = {value}, value.ndim = {value.ndim}", flush=True)
+                decoder_batch[key] = value
+            else:
+                print(f"DEBUG: Filtering out scalar field '{key}' from decoder input", flush=True)
+        
+        # Handle positions mapping
+        decoder_batch["positions"] = decoder_batch.get("input_positions")
+        
         return self.decoder(input_batch=decoder_batch)
 
     def _metrics(
@@ -599,9 +613,11 @@ class Model(BaseModel):
         """Applies sharding constraints in-place for relevant named tensors in the input batch."""
         mesh = thread_resources.env.physical_mesh  # type: ignore
         if mesh.empty or mesh.size == 1:
+            print("DEBUG: mesh.empty or mesh.size == 1.", flush=True)
             return
         cfg: Model.Config = self.config
         if cfg.batch_axis_names is None and cfg.seq_axis_names is None:
+            print("DEBUG: cfg.batch_axis_names and cfg.seq_axis_names are both None.", flush=True)
             return
 
         logging.log_first_n(
@@ -613,6 +629,7 @@ class Model(BaseModel):
         )
 
         for k, v in input_batch.items():
+            print(f"DEBUG: k = {k}, v = {v}, v.ndim = {v.ndim}", flush=True)
             if k in [
                 "input_ids",
                 "target_labels",
