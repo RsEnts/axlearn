@@ -874,6 +874,6 @@ def mixture_train_input_source(
         mixed_ds = sample_from_datasets(sources=sources, weights=weights)
 
         # Shard the mixed dataset
-        return mixed_ds
+        return mixed_ds.batch(4)
 
     return build_dataset_fn
