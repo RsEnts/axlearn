@@ -816,7 +816,6 @@ def data_partition_type_to_spec(
     else:
         raise NotImplementedError(f"Unsupported partition: {partition}")
 
-
 def host_to_global_array(
     host_arrays: Nested[Union[np.ndarray, Tensor]],
     *,
@@ -847,13 +846,44 @@ def host_to_global_array(
         )
 
     mesh = thread_resources.env.physical_mesh
+    
+    # Debug: Print mesh information
+    print(f"DEBUG: Mesh configuration:", flush=True)
+    print(f"  - Mesh shape: {mesh.shape}", flush=True)
+    print(f"  - Mesh axis names: {mesh.axis_names}", flush=True)
+    print(f"  - Mesh devices shape: {getattr(mesh, 'devices', 'N/A')}", flush=True)
+    print(f"  - Process count: {jax.process_count()}", flush=True)
+    print(f"  - Process index: {jax.process_index()}", flush=True)
+    
     partition_specs = complete_partition_spec_tree(
         jax.tree_util.tree_structure(host_arrays),
         data_partition_type_to_spec(partition),
     )
+    
+    # Debug: Print partition information
+    print(f"DEBUG: Partition information:", flush=True)
+    print(f"  - Original partition: {partition}", flush=True)
+    print(f"  - Partition specs structure: {jax.tree_util.tree_structure(partition_specs)}", flush=True)
+    
     process_count = jax.process_count()
 
     def make_array(x: np.ndarray, partition_spec: PartitionSpec):
+        print(f"DEBUG: Processing array with shape {x.shape}, dtype {x.dtype}", flush=True)
+        print(f"  - Partition spec: {partition_spec}", flush=True)
+        
+        # Handle scalar arrays specially
+        if x.ndim == 0:  # Scalar array
+            print(f"DEBUG: Handling scalar array with dtype {x.dtype}", flush=True)
+            # For scalars, use a replicated partition spec (no sharding)
+            scalar_partition_spec = PartitionSpec()
+            named_sharding = jax.sharding.NamedSharding(mesh, scalar_partition_spec)
+            
+            return jax.make_array_from_process_local_data(
+                sharding=named_sharding,
+                local_data=x,
+                global_shape=x.shape,  # Keep original scalar shape
+            )
+
         if partition == DataPartitionType.FULL:
             global_shape = (x.shape[0] * process_count, *x.shape[1:])
         elif partition == DataPartitionType.REPLICATED:
@@ -862,13 +892,76 @@ def host_to_global_array(
             global_shape = None  # Allow jax to infer.
         else:
             raise NotImplementedError(f"Unsupported partition: {partition}")
-        return jax.make_array_from_process_local_data(
-            sharding=jax.sharding.NamedSharding(mesh, partition_spec),
-            local_data=x,
-            global_shape=global_shape,
-        )
+            
+        print(f"  - Calculated global_shape: {global_shape}", flush=True)
+        
+        # Create the NamedSharding and print debug info
+        try:
+            named_sharding = jax.sharding.NamedSharding(mesh, partition_spec)
+            print(f"  - NamedSharding created successfully", flush=True)
+            print(f"  - NamedSharding mesh: {named_sharding.mesh}", flush=True)
+            print(f"  - NamedSharding spec: {named_sharding.spec}", flush=True)
+            
+            # Try to get more sharding info before the failing call
+            if global_shape is not None:
+                print(f"  - Attempting to create array with global_shape: {global_shape}", flush=True)
+                try:
+                    # This is where the error likely occurs - let's try to get more info
+                    print(f"  - Checking sharding compatibility...", flush=True)
+                    # Check if we can get devices_indices_map without error
+                    print(f"  - Getting addressable devices indices map...", flush=True)
+                    devices_map = named_sharding.addressable_devices_indices_map(global_shape)
+                    print(f"  - Addressable devices map obtained successfully", flush=True)
+                except Exception as e:
+                    print(f"  - ERROR in addressable_devices_indices_map: {e}", flush=True)
+                    print(f"  - Error type: {type(e)}", flush=True)
+                    # Let's try to understand the mesh/spec mismatch
+                    print(f"  - Mesh axis names: {mesh.axis_names}", flush=True)
+                    print(f"  - Partition spec details: {partition_spec}", flush=True)
+                    if hasattr(partition_spec, '__dict__'):
+                        print(f"  - Partition spec attributes: {partition_spec.__dict__}", flush=True)
+                    raise
+            
+        except Exception as e:
+            print(f"  - ERROR creating NamedSharding: {e}", flush=True)
+            print(f"  - Error type: {type(e)}", flush=True)
+            raise
+        
+        try:
+            result = jax.make_array_from_process_local_data(
+                sharding=named_sharding,
+                local_data=x,
+                global_shape=global_shape,
+            )
+            print(f"  - Array created successfully with shape: {result.shape}", flush=True)
+            return result
+        except Exception as e:
+            print(f"  - ERROR in make_array_from_process_local_data: {e}", flush=True)
+            print(f"  - Error type: {type(e)}", flush=True)
+            print(f"  - Local data shape: {x.shape}", flush=True)
+            print(f"  - Local data dtype: {x.dtype}", flush=True)
+            print(f"  - Global shape: {global_shape}", flush=True)
+            print(f"  - Named sharding: {named_sharding}", flush=True)
+            raise
 
-    return jax.tree.map(make_array, host_arrays, partition_specs)
+    # Debug: Print host_arrays structure before processing
+    print(f"DEBUG: Host arrays structure:", flush=True)
+    try:
+        host_arrays_shapes = jax.tree.map(lambda x: (x.shape, x.dtype) if hasattr(x, 'shape') else type(x), host_arrays)
+        print(f"  - Host arrays shapes and dtypes: {host_arrays_shapes}", flush=True)
+    except Exception as e:
+        print(f"  - Could not get host arrays shapes: {e}", flush=True)
+    
+    print(f"DEBUG: Starting jax.tree.map processing...", flush=True)
+    
+    try:
+        result = jax.tree.map(make_array, host_arrays, partition_specs)
+        print(f"DEBUG: jax.tree.map completed successfully", flush=True)
+        return result
+    except Exception as e:
+        print(f"DEBUG: ERROR in jax.tree.map: {e}", flush=True)
+        print(f"DEBUG: Error type: {type(e)}", flush=True)
+        raise
 
 
 def host_to_global_specs(

@@ -371,8 +371,10 @@ class SpmdTrainer(Module):
         return self._trainer_state_partition_specs
 
     def _train_step_input_partition_specs(self):
+        """Returns partition specs for input batch that handle scalars properly."""
         # Note that subclasses may override this method to set a partition spec for pjit which is
         # different from that of the input partition spec.
+        print(f"DEBUG: self.input.partition_spec = {self.input.partition_spec}", flush=True)
         return self.input.partition_spec
 
     def model_params_for_eval(self):
