@@ -778,10 +778,21 @@ def dispatch_input_batch(
         n=1,
     )
 
-    # Constrain the input batch.
-    input_batch = jax.tree.map(
-        lambda x: with_sharding_constraint(x, PartitionSpec(batch_axis_names)), input_batch
-    )
+    # Constrain the input batch with appropriate partition specs for each element
+    def apply_sharding_constraint(x):
+        """Apply appropriate sharding constraint based on tensor rank."""
+        # Handle scalars - they cannot be sharded
+        if hasattr(x, 'ndim') and x.ndim == 0:
+            return with_sharding_constraint(x, PartitionSpec())
+        # Handle non-tensor types (shouldn't happen, but be safe)
+        elif not hasattr(x, 'ndim'):
+            logging.warning(f"Unexpected non-tensor type in input batch: {type(x)}")
+            return x
+        else:
+            # Non-scalar tensor - use the batch axis names
+            return with_sharding_constraint(x, PartitionSpec(batch_axis_names))
+    
+    input_batch = jax.tree.map(apply_sharding_constraint, input_batch)
 
     def traverse_and_dispatch(data: NestedTensor) -> NestedTensor:
         if isinstance(data, dict):
@@ -819,7 +830,7 @@ def data_partition_type_to_spec(
 def host_to_global_array(
     host_arrays: Nested[Union[np.ndarray, Tensor]],
     *,
-    partition: Union[PartitionSpec, DataPartitionType] = DataPartitionType.FULL,
+    partition: Union[PartitionSpec, DataPartitionType, Nested[PartitionSpec]] = DataPartitionType.FULL,
 ) -> Nested[Tensor]:
     """Converts the given host device arrays to global device arrays.
 
@@ -829,7 +840,9 @@ def host_to_global_array(
         host_arrays: A nested tree of device arrays in host memory. Usually these present the
             per-host portion of the global input batch. We currently assume that per-host portions
             form a uniform sharding across the batch.
-        partition: How the global array should be partitioned.
+        partition: How the global array should be partitioned. Can be:
+            - A single PartitionSpec or DataPartitionType applied to all arrays
+            - A nested structure of PartitionSpecs matching the structure of host_arrays
 
     Returns:
         A nested tree with the same structure as `host_arrays`, but global device arrays at the
@@ -855,10 +868,21 @@ def host_to_global_array(
     print(f"  - Process count: {jax.process_count()}", flush=True)
     print(f"  - Process index: {jax.process_index()}", flush=True)
     
-    partition_specs = complete_partition_spec_tree(
-        jax.tree_util.tree_structure(host_arrays),
-        data_partition_type_to_spec(partition),
-    )
+    # Handle the case where partition is already a nested structure of PartitionSpecs
+    if isinstance(partition, (dict, tuple, list)) or (
+        hasattr(partition, '__class__') and 
+        hasattr(partition.__class__, '_fields')  # NamedTuple check
+    ):
+        # partition is already a nested structure - use it directly
+        partition_specs = partition
+        print(f"DEBUG: Using nested partition structure directly", flush=True)
+    else:
+        # partition is a single spec - apply it to the entire tree structure
+        partition_specs = complete_partition_spec_tree(
+            jax.tree_util.tree_structure(host_arrays),
+            data_partition_type_to_spec(partition),
+        )
+        print(f"DEBUG: Created partition specs from single partition", flush=True)
     
     # Debug: Print partition information
     print(f"DEBUG: Partition information:", flush=True)
@@ -884,14 +908,27 @@ def host_to_global_array(
                 global_shape=x.shape,  # Keep original scalar shape
             )
 
-        if partition == DataPartitionType.FULL:
-            global_shape = (x.shape[0] * process_count, *x.shape[1:])
-        elif partition == DataPartitionType.REPLICATED:
-            global_shape = (x.shape[0], *x.shape[1:])
+        # For non-scalars, determine the partition type from the original partition parameter
+        # We need to figure out what the original partition intent was
+        if isinstance(partition, DataPartitionType):
+            current_partition_type = partition
         elif isinstance(partition, PartitionSpec):
-            global_shape = None  # Allow jax to infer.
+            # If it's a single PartitionSpec, treat as FULL partitioning
+            current_partition_type = DataPartitionType.FULL
         else:
-            raise NotImplementedError(f"Unsupported partition: {partition}")
+            # If it's a nested structure, we can't easily determine the intent
+            # Default to inferring from the partition_spec
+            if partition_spec == PartitionSpec():
+                current_partition_type = DataPartitionType.REPLICATED
+            else:
+                current_partition_type = DataPartitionType.FULL
+
+        if current_partition_type == DataPartitionType.FULL:
+            global_shape = (x.shape[0] * process_count, *x.shape[1:])
+        elif current_partition_type == DataPartitionType.REPLICATED:
+            global_shape = (x.shape[0], *x.shape[1:])
+        else:
+            global_shape = None  # Allow jax to infer.
             
         print(f"  - Calculated global_shape: {global_shape}", flush=True)
         

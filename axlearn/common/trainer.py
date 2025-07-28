@@ -372,10 +372,27 @@ class SpmdTrainer(Module):
 
     def _train_step_input_partition_specs(self):
         """Returns partition specs for input batch that handle scalars properly."""
-        # Note that subclasses may override this method to set a partition spec for pjit which is
-        # different from that of the input partition spec.
-        print(f"DEBUG: self.input.partition_spec = {self.input.partition_spec}", flush=True)
-        return self.input.partition_spec
+        base_partition_spec = self.input.partition_spec
+        
+        # Get a sample batch to understand the structure
+        sample_batch = self.input.element_spec()
+        
+        def create_partition_spec_for_value(value, base_spec):
+            """Create appropriate partition spec based on value shape."""
+            if hasattr(value, 'shape') and len(value.shape) == 0:
+                # Scalar value - use empty PartitionSpec
+                return PartitionSpec()
+            else:
+                # Non-scalar value - use the base partition spec
+                return base_spec
+        
+        # Apply the partition spec logic to the entire batch structure
+        partition_specs = jax.tree_map(
+            lambda x: create_partition_spec_for_value(x, base_partition_spec),
+            sample_batch
+        )
+        
+        return partition_specs
 
     def model_params_for_eval(self):
         state = self.trainer_state

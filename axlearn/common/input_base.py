@@ -240,6 +240,10 @@ class Input(Module):
         """
 
         def constrain_batch_axis(path: str, value: Tensor):
+            # Handle scalars - they have no batch dimension to constrain
+            if value.ndim == 0:
+                return with_sharding_constraint(value, PartitionSpec())
+            
             mesh = thread_resources.env.physical_mesh
             batch_partitions = math.prod(
                 mesh.shape[axis] for axis in jax.tree.leaves(self._partition_spec[0])
